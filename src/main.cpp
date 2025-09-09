@@ -3,35 +3,33 @@
 // ===== CONFIGURATION CONSTANTS =====
 // Current sensor parameters
 const float CURRENT_SENSOR_SENSITIVITY = 0.040; // 40mV/A for ACS758LCB-050B
-const float CURRENT_SENSOR_QUIESCENT_VOLTAGE = 2.5; // Typical Vq output
 const int CURRENT_SENSOR_PIN = A1; // Analog pin for current sensor
 
 // PWM control
 const int PWM_PIN = 9; // PWM output pin
 const int POTENTIOMETER_PIN = A0; // Potentiometer for current setting
 
-// Current limits
-//const float MIN_CURRENT_SETTING = 5.0; // Minimum adjustable current (A)
-//const float MAX_CURRENT_SETTING = 25.0; // Maximum adjustable current (A)
-//const float STOP_CURRENT_THRESHOLD = -2.0; // Stop if current goes below this value (A)
-const float MIN_CURRENT_SETTING = 0.5; // Minimum adjustable current (A)
-const float MAX_CURRENT_SETTING = 1.5; // Maximum adjustable current (A)
-const float STOP_CURRENT_THRESHOLD = -2.0; // Stop if current goes below this value (A)
+// Current limits - NEGATIVE for charging consumer battery
+const float MIN_CURRENT_SETTING = -0.5; // Minimum adjustable current (A)
+const float MAX_CURRENT_SETTING = -1.5; // Maximum adjustable current (A)
+const float STOP_CURRENT_THRESHOLD = 2.0; // Stop if current goes above this value (A) - positive means reverse flow!
 
 // Timing parameters
 const unsigned long CURRENT_MEASUREMENT_INTERVAL = 20; // ~50 Hz (20ms)
 const unsigned long RETRY_INTERVAL = 60000; // 60 seconds retry delay
+const unsigned long PRINT_INTERVAL = 500; // Print every 500ms (2 gange/sekund)
 
 // EMA filter
 const float EMA_ALPHA = 0.1; // EMA filter coefficient
 
 // ===== GLOBAL VARIABLES =====
-// Sensor calibration
-float currentSensorOffset = 0.0; // Will be calibrated at startup
+// Sensor calibration - manual offset based on multimeter measurement
+float currentSensorOffset = 2.4475; // Measured quiescent voltage
 
 // Current measurement
 float filteredCurrent = 0.0;
 float targetCurrent = 0.0;
+int currentPWM = 0; // Gemmer den aktuelle PWM-værdi
 
 // State machine
 enum ChargingState { 
@@ -47,6 +45,7 @@ ChargingState chargingState = STATE_CALIBRATING;
 unsigned long lastCurrentMeasurementTime = 0;
 unsigned long lastRetryTime = 0;
 unsigned long stateEntryTime = 0;
+unsigned long lastPrintTime = 0;
 
 // ===== FUNCTION PROTOTYPES =====
 void calibrateCurrentSensor();
@@ -59,6 +58,7 @@ void handleCalibratingState();
 void handleChargingState();
 void handleStoppedState();
 void handleFaultState();
+void printDebugInfo();
 
 // ===== SETUP =====
 void setup() {
@@ -68,6 +68,10 @@ void setup() {
   
   // Start with PWM off
   analogWrite(PWM_PIN, 0);
+  currentPWM = 0;
+  
+  // Set analog reference to DEFAULT (5V for Arduino Uno)
+  analogReference(DEFAULT);
   
   // Initialize serial
   Serial.begin(115200);
@@ -86,12 +90,26 @@ void loop() {
     lastCurrentMeasurementTime = millis();
   }
   
-  // Read potentiometer to adjust target current
+  // Read potentiometer to adjust target current - MANUAL FLOAT MAPPING
   int potValue = analogRead(POTENTIOMETER_PIN);
-  targetCurrent = map(potValue, 0, 1023, MIN_CURRENT_SETTING, MAX_CURRENT_SETTING);
+  targetCurrent = MIN_CURRENT_SETTING + (MAX_CURRENT_SETTING - MIN_CURRENT_SETTING) * (potValue / 1023.0);
   
   // Update charging state machine
   updateChargingState();
+  
+  // Print debug info at reduced rate
+  if (millis() - lastPrintTime >= PRINT_INTERVAL) {
+    Serial.print("Pot Value: ");
+    Serial.print(potValue);
+    Serial.print(" | Target Current: ");
+    Serial.print(targetCurrent, 2);
+    Serial.print("A | Actual: ");
+    Serial.print(filteredCurrent, 2);
+    Serial.print("A | PWM: ");
+    Serial.println(currentPWM);
+    
+    lastPrintTime = millis();
+  }
   
   // Small delay to prevent watchdog issues
   delay(10);
@@ -100,26 +118,44 @@ void loop() {
 // ===== CURRENT MEASUREMENT FUNCTIONS =====
 void calibrateCurrentSensor() {
   Serial.println("Calibrating current sensor...");
+  Serial.println("Ensure no current is flowing during calibration!");
   
-  // Take multiple samples for better accuracy
-  const int numSamples = 100;
-  float sum = 0;
+  // Take multiple samples over a longer period for better accuracy
+  const int numSamples = 500; // Flere samples over længere tid
+  long sum = 0;
   
   for (int i = 0; i < numSamples; i++) {
-    sum += analogRead(CURRENT_SENSOR_PIN);
-    delay(5);
+    int adcValue = analogRead(CURRENT_SENSOR_PIN);
+    sum += adcValue;
+    
+    // Vis fremskridt hver 100. sample
+    if (i % 100 == 0) {
+      Serial.print(".");
+    }
+    
+    delay(10); // Kort delay mellem samples
   }
+  Serial.println();
   
   // Calculate average ADC value and convert to voltage
-  float averageADC = sum / numSamples;
+  float averageADC = sum / (float)numSamples;
   float voltage = (averageADC / 1023.0) * 5.0;
   
-  // Set offset (should be close to 2.5V at 0A)
+  // Set offset
   currentSensorOffset = voltage;
   
-  Serial.print("Calibration complete. Offset voltage: ");
-  Serial.print(currentSensorOffset, 3);
+  Serial.print("Average ADC: ");
+  Serial.print(averageADC);
+  Serial.print(" | Offset voltage: ");
+  Serial.print(currentSensorOffset, 4);
   Serial.println("V");
+  
+  // Check if calibration seems reasonable
+  if (currentSensorOffset < 2.0 || currentSensorOffset > 3.0) {
+    Serial.println("WARNING: Calibration value seems unusual!");
+    Serial.println("Using manual offset instead.");
+    currentSensorOffset = 2.4475; // Fallback to manual offset
+  }
 }
 
 float readCurrent() {
@@ -165,8 +201,8 @@ void updateChargingState() {
 }
 
 void handleCalibratingState() {
-  // Perform one-time calibration
-  if (millis() - stateEntryTime > 1000) {
+  // Perform calibration
+  if (millis() - stateEntryTime > 1000) { // Vent 1 sekund før kalibrering
     calibrateCurrentSensor();
     chargingState = STATE_IDLE;
     stateEntryTime = millis();
@@ -177,9 +213,11 @@ void handleCalibratingState() {
 void handleIdleState() {
   // Always start with PWM off in idle
   analogWrite(PWM_PIN, 0);
+  currentPWM = 0;
   
   // Check if we should start charging
-  if (filteredCurrent < STOP_CURRENT_THRESHOLD) {
+  // OBS: Nu stopper vi hvis strømmen bliver POSITIV (reverse flow)
+  if (filteredCurrent > STOP_CURRENT_THRESHOLD) {
     Serial.println("Reverse current detected! Staying in IDLE");
     return;
   }
@@ -192,32 +230,28 @@ void handleIdleState() {
 
 void handleChargingState() {
   // Safety check: stop immediately if reverse current detected
-  if (filteredCurrent < STOP_CURRENT_THRESHOLD) {
+  // OBS: Nu stopper vi hvis strømmen bliver POSITIV (reverse flow)
+  if (filteredCurrent > STOP_CURRENT_THRESHOLD) {
     Serial.println("Reverse current detected during charging!");
     chargingState = STATE_STOPPED;
     stateEntryTime = millis();
     analogWrite(PWM_PIN, 0); // Turn off immediately
+    currentPWM = 0;
     return;
   }
   
-  // Calculate current error
-  float currentError = targetCurrent - filteredCurrent;
+  // Calculate current error - NOW: error = actual - target
+  // So if actual is less negative than target, error is positive -> increase PWM
+  float currentError = filteredCurrent - targetCurrent;
   
   // Adjust PWM output based on error
   setPWMOutput(currentError);
-  
-  // Debug output
-  Serial.print("Target: ");
-  Serial.print(targetCurrent, 1);
-  Serial.print("A, Actual: ");
-  Serial.print(filteredCurrent, 1);
-  Serial.print("A, PWM: ");
-  Serial.println(analogRead(PWM_PIN));
 }
 
 void handleStoppedState() {
   // Ensure PWM is off
   analogWrite(PWM_PIN, 0);
+  currentPWM = 0;
   
   // Check if it's time to retry
   if (millis() - stateEntryTime >= RETRY_INTERVAL) {
@@ -230,6 +264,7 @@ void handleStoppedState() {
 void handleFaultState() {
   // PWM remains off in fault state
   analogWrite(PWM_PIN, 0);
+  currentPWM = 0;
   
   // Flash LED to indicate fault
   digitalWrite(LED_BUILTIN, (millis() / 500) % 2);
@@ -248,4 +283,5 @@ void setPWMOutput(float currentError) {
   
   // Update PWM output
   analogWrite(PWM_PIN, pwmValue);
+  currentPWM = pwmValue; // Opdater den globale PWM-værdi
 }
