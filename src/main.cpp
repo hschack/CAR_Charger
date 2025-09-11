@@ -1,178 +1,80 @@
 #include <Arduino.h>
 
-// ===== KONFIGURATIONSKONSTANTER =====
-const float CURRENT_SENSOR_SENSITIVITY = 0.040;
-const int CURRENT_SENSOR_PIN = A1;
-const int PWM_PIN = 9;
-const int POTENTIOMETER_PIN = A0;
+// constants won't change. Used here to set a pin number:
+const int ledPin = LED_BUILTIN;  // the number of the LED pin
+const int potPin = A0;  // Analog input A0
+const int currentPin = A1;
+const int carBat = A2;
+const int liefpoBat = A3;
+// Variables will change:
+int ledState = LOW;  // ledState used to set the LED
+const int pwmPin = 9;  // PWM pin 9 på Uno
+// Generally, you should use "unsigned long" for variables that hold time
+// The value will quickly become too large for an int to store
+unsigned long previousMillis = 0;  // will store last time LED was updated
 
-// Strømgrænser
-const float MIN_CURRENT_SETTING = 0.0;
-const float MAX_CURRENT_SETTING = 1.5;
-const float REVERSE_CURRENT_THRESHOLD = -0.5;
+// constants won't change:
+const long interval = 1000;  // interval at which to blink (milliseconds)
 
-// Timing
-const unsigned long CURRENT_MEASUREMENT_INTERVAL = 20;
-const unsigned long PRINT_INTERVAL = 500;
-const unsigned long RAMP_TIME_MS = 20000; // 20 sekunder ramp tid
-const unsigned long RETRY_DELAY_MS = 60000;
 
-// Filter indstillinger
-const float FILTER_ALPHA = 0.01;
 
-// Fast offset baseret på multimeter måling
-const float CURRENT_SENSOR_OFFSET = 2.502; // Opdateret offset
-
-// ===== GLOBALE VARIABLER =====
-float filteredCurrent = 0.0;
-float targetCurrent = 0.0;
-float smoothedTargetCurrent = 0.0;
-int currentPWM = 0;
-
-unsigned long lastCurrentMeasurementTime = 0;
-unsigned long lastPrintTime = 0;
-unsigned long rampStartTime = 0;
-unsigned long errorTime = 0;
-
-enum SystemState {
-  STATE_IDLE,
-  STATE_RAMP_UP,
-  STATE_CHARGING,
-  STATE_ERROR
-};
-
-SystemState currentState = STATE_IDLE;
 
 void setup() {
-  pinMode(PWM_PIN, OUTPUT);
-  analogWrite(PWM_PIN, 0);
-  
+  // Sæt PWM-pinen til output
+  pinMode(pwmPin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+  // Du kan starte Serial Monitor for at se værdierne (valgfrit)
   Serial.begin(115200);
-  Serial.println("Battery Charger Controller Starting...");
-  
-  analogReference(DEFAULT);
-  
-  // Initialiser med den aktuelle target
-  int potValue = analogRead(POTENTIOMETER_PIN);
-  targetCurrent = MIN_CURRENT_SETTING + (MAX_CURRENT_SETTING - MIN_CURRENT_SETTING) * (potValue / 1023.0);
-  smoothedTargetCurrent = 0; // Start fra 0
 }
 
 void loop() {
   unsigned long currentMillis = millis();
+  // Læs værdien fra potentiometeret (0 - 1023)
+  int sensorValue = analogRead(potPin);
+  
+  // Konverter den analoge læsning (0-1023) til en PWM værdi (0-255)
+  // Ved at mappe (map) værdien
+  int pwmValue = map(sensorValue, 0, 1023, 0, 255);
+  
+  // Skriv PWM-værdien til pinen
+  analogWrite(pwmPin, pwmValue);
 
-  // Opdater strømmåling med meget langsomt filter
-  if (currentMillis - lastCurrentMeasurementTime >= CURRENT_MEASUREMENT_INTERVAL) {
-    int adcValue = analogRead(CURRENT_SENSOR_PIN);
-    float voltage = (adcValue / 1023.0) * 5.0;
-    float current = (voltage - CURRENT_SENSOR_OFFSET) / CURRENT_SENSOR_SENSITIVITY;
-    
-    // Meget langsomt low-pass filter
-    filteredCurrent = (FILTER_ALPHA * current) + ((1 - FILTER_ALPHA) * filteredCurrent);
-    
-    lastCurrentMeasurementTime = currentMillis;
-  }
+  int powerValue = analogRead(currentPin);
+  float power = (powerValue / 1023.0) * 5.0;
 
-  // Læs potentiometer og beregn target strøm
-  int potValue = analogRead(POTENTIOMETER_PIN);
-  targetCurrent = MIN_CURRENT_SETTING + (MAX_CURRENT_SETTING - MIN_CURRENT_SETTING) * (potValue / 1023.0);
+  int carValue = analogRead(carBat);
+  float carValueV = (carValue / 1023.0) * 5.0;
 
-  // Tilstandsmaskine
-  switch (currentState) {
-    case STATE_IDLE:
-      // Start ramp op
-      currentState = STATE_RAMP_UP;
-      rampStartTime = currentMillis;
-      smoothedTargetCurrent = 0; // Start fra 0
-      Serial.println("Starting ramp-up");
-      break;
-      
-    case STATE_RAMP_UP:
-      {
-        // Beregn ramp fremskridt (0.0 til 1.0)
-        float rampProgress = min(1.0, (float)(currentMillis - rampStartTime) / RAMP_TIME_MS);
-        
-        // Beregn glat target baseret på ramp fremskridt
-        smoothedTargetCurrent = targetCurrent * rampProgress;
-        
-        // Hvis ramp er fuldført, gå til charging tilstand
-        if (rampProgress >= 1.0) {
-          currentState = STATE_CHARGING;
-          Serial.println("Ramp complete, entering charging state");
-        }
-      }
-      break;
-      
-    case STATE_CHARGING:
-      // Brug den fulde target strøm
-      smoothedTargetCurrent = targetCurrent;
-      
-      // Tjek for reverse strøm
-      if (filteredCurrent < REVERSE_CURRENT_THRESHOLD) {
-        Serial.println("Reverse current detected! Entering error state.");
-        currentState = STATE_ERROR;
-        errorTime = currentMillis;
-        analogWrite(PWM_PIN, 0);
-        currentPWM = 0;
-      }
-      break;
-      
-    case STATE_ERROR:
-      // Vent i 60 sekunder før genstart
-      if (currentMillis - errorTime >= RETRY_DELAY_MS) {
-        Serial.println("Retrying...");
-        currentState = STATE_IDLE;
-      }
-      break;
-  }
+  int liefpoValue = analogRead(liefpoBat);
+  float liefpoValueV = (liefpoValue / 1023.0) * 5.0;
 
-  // Regulering (kun hvis ikke i fejltilstand)
-  if (currentState != STATE_ERROR) {
-    // Simpel P-regulator
-    float error = smoothedTargetCurrent - filteredCurrent;
-    
-    // Regulator med højere forstærkning
-    int pwmChange = error * 10.0; // Forøget forstærkning
-    
-    // Begræns PWM ændring
-    pwmChange = constrain(pwmChange, -5, 5);
-    currentPWM = constrain(currentPWM + pwmChange, 0, 255);
-    
-    analogWrite(PWM_PIN, currentPWM);
-  }
+  // (Valgfrit) Print værdierne til Serial Monitor
+  Serial.print("Pot: ");
+  Serial.print(sensorValue);
+  Serial.print(" | PWM: ");
+  Serial.print(pwmValue);
+  Serial.print(" | A: ");
+  Serial.print(power);
+  Serial.print(" | Car: ");
+  Serial.print(carValueV);
+  Serial.print(" | Liefpo: ");
+  Serial.println(liefpoValueV);
 
-  // Debug output
-  if (currentMillis - lastPrintTime >= PRINT_INTERVAL) {
-    Serial.print("State: ");
-    switch (currentState) {
-      case STATE_IDLE: Serial.print("IDLE"); break;
-      case STATE_RAMP_UP: Serial.print("RAMP_UP"); break;
-      case STATE_CHARGING: Serial.print("CHARGING"); break;
-      case STATE_ERROR: Serial.print("ERROR"); break;
+    if (currentMillis - previousMillis >= interval) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+
+    // if the LED is off turn it on and vice-versa:
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
     }
-    
-    // Tilføj ramp fremskridt til output
-    float rampProgress = 0.0;
-    if (currentState == STATE_RAMP_UP) {
-      rampProgress = min(1.0, (float)(currentMillis - rampStartTime) / RAMP_TIME_MS);
     }
-    
-    Serial.print(" | Ramp: ");
-    Serial.print(rampProgress * 100, 1);
-    Serial.print("%");
-    Serial.print(" | Pot: ");
-    Serial.print(potValue);
-    Serial.print(" | Target: ");
-    Serial.print(targetCurrent, 2);
-    Serial.print("A | SmoothedTarget: ");
-    Serial.print(smoothedTargetCurrent, 2);
-    Serial.print("A | Actual: ");
-    Serial.print(filteredCurrent, 2);
-    Serial.print("A | PWM: ");
-    Serial.println(currentPWM);
-    
-    lastPrintTime = currentMillis;
-  }
-
-  delay(1);
+    // set the LED with the ledState of the variable:
+    digitalWrite(ledPin, ledState);
+  
+  // En lille forsinkelse for at gøre Serial output læsbart
+  // Dette kan gøres meget kortere eller fjernes helt efter behov
+  delay(500); 
 }
