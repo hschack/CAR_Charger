@@ -6,7 +6,7 @@ const int ledPin       = LED_BUILTIN;
 const int currentPin   = A1; // ACS758
 const int carBatPin    = A2;
 const int liefpoBatPin = A3;
-const int pwmPin       = 5;
+const int pwmPin       = 9;
 
 // ------------------- ADC / sensor constants -------------------
 constexpr float Vref = 5.0;
