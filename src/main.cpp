@@ -23,8 +23,8 @@ constexpr float acsSens   = 0.12207; // 40 mV per 1A
 
 // ------------------- Safety thresholds -------------------
 constexpr float BAT_DIFF_MAX   = 0.0;   // V, carBat - LiFePO4
-constexpr float LIFEPo_MAX     = 14.0;  // V
-constexpr float LIFEPo_RECOVER = 13.5;  // V, resume charging
+constexpr float LIFEPO_MAX     = 14.0;  // V
+constexpr float LIFEPO_RECOVER = 13.5;  // V, resume charging
 constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 
 // ------------------- PWM control constants -------------------
@@ -146,13 +146,16 @@ int controlPWM(float measuredAmp, bool doCharge) {
 void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut, bool doCharge) {
     Serial.print("Current: ");
     Serial.print(measuredAmp, 1);
-    Serial.print("A, C:");
+    Serial.print("A, C: ");
     Serial.print(carVolt, 1);
-    Serial.print(", L:");
+    Serial.print(", L: ");
     Serial.print(lifepoVolt, 1);
-    Serial.print(", ");
+    Serial.print(", pwm: ");
     Serial.print(pwmOut);
     Serial.print(", ");
+    Serial.print(", Dif: ");
+    Serial.print(carVolt - lifepoVolt ,2);
+    Serial.print(", Charge: ");
     Serial.println(doCharge ? "YES" : "NO");
 }
 
@@ -171,14 +174,17 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     }
     
     if ((carVolt - lifepoVolt) < BAT_DIFF_MAX) {
-        Serial.println("Error: ");
+        Serial.println("Error 1: ");
         Serial.println((carVolt-lifepoVolt), 2);
         doCharge = false;  // stop charging
-    } else if (lifepoVolt > LIFEPo_MAX) {
+    } else if (lifepoVolt > LIFEPO_MAX) {
+        Serial.println("Error 2: ");
+
         doCharge = false;  // stop charging
     } else if (measuredAmp < ACS_MIN) {
+        Serial.print("ACS min lade fra lifePo til bil");
         doCharge = false;  // Stop if current goes negative beyond threshold
-    } else if (lifepoVolt < LIFEPo_RECOVER) {
+    } else if (lifepoVolt < LIFEPO_RECOVER) {
         doCharge = true;   // resume charging
     }
 
