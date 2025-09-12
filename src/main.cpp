@@ -18,48 +18,40 @@ constexpr float R2 = 2200.0;
 constexpr float scaleDivider = (Vref / 1023.0) * ((R1 + R2) / R2);
 
 // ACS758 parameters
-constexpr float acsOffset = 2.50; // 0A
-constexpr float acsSens   = 0.040; // 40 mV per 1A
+constexpr float acsOffset = 510.0; // 0A
+constexpr float acsSens   = 0.12207; // 40 mV per 1A
 
 // ------------------- Safety thresholds -------------------
-constexpr float BAT_DIFF_MAX   = 0.2;   // V, carBat - LiFePO4
+constexpr float BAT_DIFF_MAX   = 0.0;   // V, carBat - LiFePO4
 constexpr float LIFEPo_MAX     = 14.0;  // V
 constexpr float LIFEPo_RECOVER = 13.5;  // V, resume charging
 constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 
 // ------------------- PWM control constants -------------------
-constexpr float SETPOINT_A     = 20.0;  // target current
-constexpr float PWM_STEP_FAST  = 0.05;  // 5% PWM step
-constexpr float PWM_STEP_SLOW  = 0.02;  // 2% PWM step
+constexpr float SETPOINT_A     = 7.0;  // target current
+#define PWM_STEP_FAST   20  // 5% PWM step
+#define PWM_STEP_SLOW   2  // 2% PWM step
 constexpr int   PWM_MAX        = 255;
 constexpr int   PWM_MIN        = 0;
 
 // ------------------- Timing -------------------
-unsigned long lastAdcTime   = 0;
-unsigned long lastPrintTime = 0;
-constexpr unsigned long adcInterval   = 100;   // 10 Hz
-constexpr unsigned long printInterval = 1000;  // 1 Hz
-
+#define ADC_INTERVAL   25   // in 25ms => 40 Hz
+#define PRINT_INTERVAL 1000  // in 1000ms => 2 Hz
+#define FILTER_CONSTANT 0.3
 // ------------------- Filtered ADC -------------------
-uint16_t filtCurrent   = 0;
-uint16_t filtCarBat    = 0;
-uint16_t filtLiFePO4   = 0;
-
-// ------------------- PWM state -------------------
-int pwmOut = 0;
-
-// ------------------- Charge permission flag -------------------
-bool doCharge = true;   // true = charging allowed
+static float filtCurrent   = 500.0;
+static float filtCarBat    = 0.0;
+static float filtLiFePO4   = 0.0;
 
 // EEPROM address to store flag
 constexpr int EEPROM_ADDR_FLAG = 0;
 
 // ------------------- Function prototypes -------------------
 void sampleAdc();
-uint16_t filteredUpdate(uint16_t oldVal, int newVal);
-void controlPWM(float measuredAmp);
-void printStatus(float measuredAmp);
-void batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp);
+float filteredUpdate(float oldVal, float newVal);
+int controlPWM(float measuredAmp, bool doCharge);
+void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut, bool doCharge);
+bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp);
 bool readEepromFlag();
 void writeEepromFlag(bool flag);
 
@@ -67,41 +59,39 @@ void writeEepromFlag(bool flag);
 void setup() {
     pinMode(ledPin, OUTPUT);
     pinMode(pwmPin, OUTPUT);
-    analogWrite(pwmPin, pwmOut);
+    analogWrite(pwmPin, 0);
     Serial.begin(115200);
-
-    // Read flag from EEPROM (0xFF = allow charging)
-    doCharge = readEepromFlag();
 }
 
 // ------------------- Main loop -------------------
 void loop() {
-    unsigned long now = millis();
+   static uint32_t lastAdcTime = 0;
+   static uint32_t lastPrintTime = 0;
+   uint32_t now = millis();
 
     // ADC sampling 10 Hz
-    if (now - lastAdcTime >= adcInterval) {
+    if ((now - lastAdcTime) >= ADC_INTERVAL) {
         lastAdcTime = now;
         sampleAdc();
     }
 
     // Control + safety check + print 1 Hz
-    if (now - lastPrintTime >= printInterval) {
+    if ((now - lastPrintTime) >= PRINT_INTERVAL) {
         lastPrintTime = now;
 
         // Convert ADCs to voltage / current
         float carVolt     = filtCarBat * scaleDivider;
         float lifepoVolt  = filtLiFePO4 * scaleDivider;
-        float currentVolt = filtCurrent * scaleDirect;
-        float measuredAmp = (currentVolt - acsOffset) / acsSens;
+        float measuredAmp = (filtCurrent - acsOffset) * acsSens;
 
         // Safety check and update doCharge
-        batterySafetyCheck(carVolt, lifepoVolt, measuredAmp);
+        bool doCharge = batterySafetyCheck(carVolt, lifepoVolt, measuredAmp);
 
         // Only control PWM if allowed
-        if (doCharge) controlPWM(measuredAmp);
+        int Pwm = controlPWM(measuredAmp, doCharge);
 
         // Print status
-        printStatus(measuredAmp);
+        printStatus(measuredAmp, carVolt, lifepoVolt, Pwm, doCharge);
         digitalWrite(ledPin, !digitalRead(ledPin));
     }
 }
@@ -115,58 +105,90 @@ void sampleAdc() {
     filtLiFePO4   = filteredUpdate(filtLiFePO4,   analogRead(liefpoBatPin));
 }
 
-uint16_t filteredUpdate(uint16_t oldVal, int newVal) {
-    return (uint16_t)(oldVal * 0.9 + newVal * 0.1);
+float filteredUpdate(float oldVal, float newVal) {
+    return (oldVal * (1.0-FILTER_CONSTANT)) + (newVal * FILTER_CONSTANT);
 }
 
 // Simple incremental PWM control
-void controlPWM(float measuredAmp) {
-    int step = 0;
-    if (measuredAmp < SETPOINT_A * 0.8) {
-        step = (int)(PWM_MAX * PWM_STEP_FAST); // +5%
-    } else if (measuredAmp < SETPOINT_A) {
-        step = (int)(PWM_MAX * PWM_STEP_SLOW); // +2%
-    } else {
-        step = -(int)(PWM_MAX * PWM_STEP_SLOW); // -2%
+int controlPWM(float measuredAmp, bool doCharge) {
+    static int16_t pwmOut = 0;
+    int8_t step = 0;
+
+    if(doCharge) {
+        if (measuredAmp < (SETPOINT_A * 0.8)) {
+            step = PWM_STEP_FAST; // inc pwm by PWM_STEP_FAST
+        } else if (measuredAmp < SETPOINT_A) {
+            step = PWM_STEP_SLOW;   // inc pwm by PWM_STEP_SLOW
+        } else if(measuredAmp > (SETPOINT_A*1.2)) {
+            step = -PWM_STEP_SLOW;  // dec pwm by PWM_STEP_SLOW
+        }
+        
+        pwmOut = pwmOut + step;
+        if (pwmOut > PWM_MAX) {
+            pwmOut = PWM_MAX;
+        }
+        if (pwmOut < PWM_MIN) {
+            pwmOut = PWM_MIN;
+        }
+    }
+    else {
+        pwmOut = 0;
     }
 
-    pwmOut += step;
-    if (pwmOut > PWM_MAX) pwmOut = PWM_MAX;
-    if (pwmOut < PWM_MIN) pwmOut = PWM_MIN;
-
-    analogWrite(pwmPin, pwmOut);
+    if(step != 0) {
+        // Only update if pwm value is changed
+        analogWrite(pwmPin, pwmOut);
+    }
+    return pwmOut;
 }
 
 // Print current & PWM
-void printStatus(float measuredAmp) {
+void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut, bool doCharge) {
     Serial.print("Current: ");
-    Serial.print(measuredAmp, 2);
-    Serial.print(" A   PWM: 0x");
-    Serial.print(pwmOut, HEX);
-    Serial.print(" (");
+    Serial.print(measuredAmp, 1);
+    Serial.print("A, C:");
+    Serial.print(carVolt, 1);
+    Serial.print(", L:");
+    Serial.print(lifepoVolt, 1);
+    Serial.print(", ");
     Serial.print(pwmOut);
-    Serial.println(")");
-    Serial.print("Charge allowed: ");
+    Serial.print(", ");
     Serial.println(doCharge ? "YES" : "NO");
 }
 
 // ------------------- Battery safety check -------------------
-void batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
+bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
+    static bool doCharge = false;
+    static bool FirstRun = true;
     bool prevFlag = doCharge;
 
+    if(FirstRun) {
+        doCharge = readEepromFlag();
+        prevFlag = doCharge;
+        Serial.print("doCharge from eeprom = ");
+        Serial.println(doCharge ? "YES" : "NO");
+        FirstRun = false;
+    }
+    
     if ((carVolt - lifepoVolt) < BAT_DIFF_MAX) {
+        Serial.println("Error: ");
+        Serial.println((carVolt-lifepoVolt), 2);
         doCharge = false;  // stop charging
     } else if (lifepoVolt > LIFEPo_MAX) {
         doCharge = false;  // stop charging
-    } else if (!doCharge && lifepoVolt < LIFEPo_RECOVER) {
+    } else if (measuredAmp < ACS_MIN) {
+        doCharge = false;  // Stop if current goes negative beyond threshold
+    } else if (lifepoVolt < LIFEPo_RECOVER) {
         doCharge = true;   // resume charging
     }
 
-    // Stop if current goes negative beyond threshold
-    if (measuredAmp < ACS_MIN) doCharge = false;
-
     // Write flag to EEPROM if changed
-    if (doCharge != prevFlag) writeEepromFlag(doCharge);
+    if (doCharge != prevFlag) {
+        Serial.println("DoCharg written to eeprom");
+        writeEepromFlag(doCharge);
+        prevFlag = doCharge;
+    }
+    return doCharge;
 }
 
 // ------------------- EEPROM helpers -------------------
