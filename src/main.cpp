@@ -111,7 +111,8 @@ float filteredUpdate(float oldVal, float newVal) {
 
 // Simple incremental PWM control
 int controlPWM(float measuredAmp, bool doCharge) {
-    static int16_t pwmOut = 0;
+    static int16_t pwmOutUpdated = -1; // -1 => will guarantee to update pwm output at first run
+    int16_t pwmOut;
     int8_t step = 0;
 
     if(doCharge) { // true
@@ -123,7 +124,7 @@ int controlPWM(float measuredAmp, bool doCharge) {
             step = -PWM_STEP_SLOW;  // dec pwm by PWM_STEP_SLOW
         }
         
-        pwmOut = pwmOut + step;
+        pwmOut = pwmOutUpdated + step;
         if (pwmOut > PWM_MAX) {
             pwmOut = PWM_MAX;
         }
@@ -133,14 +134,12 @@ int controlPWM(float measuredAmp, bool doCharge) {
     }
     else {
         pwmOut = 0;
-        analogWrite(pwmPin, pwmOut);
-        Serial.println(" PWM = 0");
     }
 
-    if(step != 0) {
-        // Only update if pwm value is changed
+    if(pwmOutUpdated != pwmOut) {
+        // Change pwm output, if pwmOut has changed
         analogWrite(pwmPin, pwmOut);
-        Serial.println("PWM har ændret værdi");
+        pwmOutUpdated = pwmOut;
     }
     return pwmOut;
 }
@@ -163,21 +162,15 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
         Serial.print("Error 1: ");
         Serial.println((carVolt-lifepoVolt), 2);
         doCharge = false;  // stop charging
-    } 
-    
-    if (lifepoVolt > LIFEPO_MAX) {
+    } else if (lifepoVolt > LIFEPO_MAX) {
         Serial.print("Full Charge: ) ");
         Serial.println((lifepoVolt), 2);
         doCharge = false;  // stop charging
-    }
-    
-    if (measuredAmp < ACS_MIN) {
+    } else if (measuredAmp < ACS_MIN) {
         Serial.print("ACS  lader fra lifePo til bil: ");
         Serial.println((measuredAmp), 1);
         doCharge = false;  // Stop if current goes negative beyond threshold
-    }
-    
-    if (lifepoVolt < LIFEPO_RECOVER) {
+    } else if (lifepoVolt < LIFEPO_RECOVER) {
         doCharge = true;   // resume charging
     }
 
