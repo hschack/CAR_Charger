@@ -69,7 +69,7 @@ void loop() {
    static uint32_t lastPrintTime = 0;
    uint32_t now = millis();
 
-    // ADC sampling 10 Hz
+    // ADC sampling 25 Hz
     if ((now - lastAdcTime) >= ADC_INTERVAL) {
         lastAdcTime = now;
         sampleAdc();
@@ -114,7 +114,7 @@ int controlPWM(float measuredAmp, bool doCharge) {
     static int16_t pwmOut = 0;
     int8_t step = 0;
 
-    if(doCharge) {
+    if(doCharge) { // true
         if (measuredAmp < (SETPOINT_A * 0.8)) {
             step = PWM_STEP_FAST; // inc pwm by PWM_STEP_FAST
         } else if (measuredAmp < SETPOINT_A) {
@@ -142,23 +142,6 @@ int controlPWM(float measuredAmp, bool doCharge) {
     return pwmOut;
 }
 
-// Print current & PWM
-void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut, bool doCharge) {
-    Serial.print("Current: ");
-    Serial.print(measuredAmp, 1);
-    Serial.print("A, C: ");
-    Serial.print(carVolt, 1);
-    Serial.print(", L: ");
-    Serial.print(lifepoVolt, 1);
-    Serial.print(", pwm: ");
-    Serial.print(pwmOut);
-    Serial.print(", ");
-    Serial.print(", Dif: ");
-    Serial.print(carVolt - lifepoVolt ,2);
-    Serial.print(", Charge: ");
-    Serial.println(doCharge ? "YES" : "NO");
-}
-
 // ------------------- Battery safety check -------------------
 bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     static bool doCharge = false;
@@ -174,15 +157,16 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     }
     
     if ((carVolt - lifepoVolt) < BAT_DIFF_MAX) {
-        Serial.println("Error 1: ");
+        Serial.print("Error 1: ");
         Serial.println((carVolt-lifepoVolt), 2);
         doCharge = false;  // stop charging
     } else if (lifepoVolt > LIFEPO_MAX) {
-        Serial.println("Error 2: ");
-
+        Serial.print("Full Charge: ) ");
+        Serial.println((lifepoVolt), 2);
         doCharge = false;  // stop charging
     } else if (measuredAmp < ACS_MIN) {
-        Serial.print("ACS min lade fra lifePo til bil");
+        Serial.print("ACS  lader fra lifePo til bil: ");
+        Serial.println((measuredAmp), 1);
         doCharge = false;  // Stop if current goes negative beyond threshold
     } else if (lifepoVolt < LIFEPO_RECOVER) {
         doCharge = true;   // resume charging
@@ -195,6 +179,23 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
         prevFlag = doCharge;
     }
     return doCharge;
+}
+
+// Print current & PWM
+void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut, bool doCharge) {
+    Serial.print("Current: ");
+    Serial.print(measuredAmp, 1);
+    Serial.print("A, C: ");
+    Serial.print(carVolt, 1);
+    Serial.print(", L: ");
+    Serial.print(lifepoVolt, 1);
+    Serial.print(", pwm: ");
+    Serial.print(pwmOut);
+    Serial.print(", ");
+    Serial.print(", Dif: ");
+    Serial.print(carVolt - lifepoVolt ,2);
+    Serial.print(", Charge: ");
+    Serial.println(doCharge ? "YES" : "NO");
 }
 
 // ------------------- EEPROM helpers -------------------
