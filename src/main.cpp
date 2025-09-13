@@ -133,11 +133,14 @@ int controlPWM(float measuredAmp, bool doCharge) {
     }
     else {
         pwmOut = 0;
+        analogWrite(pwmPin, pwmOut);
+        Serial.println(" PWM = 0");
     }
 
     if(step != 0) {
         // Only update if pwm value is changed
         analogWrite(pwmPin, pwmOut);
+        Serial.println("PWM har ændret værdi");
     }
     return pwmOut;
 }
