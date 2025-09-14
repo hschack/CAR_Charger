@@ -2,11 +2,11 @@
 #include <EEPROM.h>
 
 // ------------------- Pin constants -------------------
-const int ledPin       = LED_BUILTIN;
-const int currentPin   = A1; // ACS758
-const int carBatPin    = A2;
-const int liefpoBatPin = A3;
-const int pwmPin       = 9;
+const uint8_t ledPin       = LED_BUILTIN;
+const uint8_t currentPin   = A1; // ACS758
+const uint8_t carBatPin    = A2;
+const uint8_t liefpoBatPin = A3;
+const uint8_t pwmPin       = 9;
 
 // ------------------- ADC / sensor constants -------------------
 constexpr float Vref = 5.0;
@@ -31,8 +31,8 @@ constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 constexpr float SETPOINT_A     = 7.0;  // target current
 #define PWM_STEP_FAST   20  // 5% PWM step
 #define PWM_STEP_SLOW   2  // 2% PWM step
-constexpr int   PWM_MAX        = 255;
-constexpr int   PWM_MIN        = 0;
+constexpr uint8_t   PWM_MAX        = 255;
+constexpr uint8_t   PWM_MIN        = 0;
 
 // ------------------- Timing -------------------
 #define ADC_INTERVAL   25   // in 25ms => 40 Hz
@@ -44,7 +44,7 @@ static float filtCarBat    = 0.0;
 static float filtLiFePO4   = 0.0;
 
 // EEPROM address to store flag
-constexpr int EEPROM_ADDR_FLAG = 0;
+constexpr uint8_t EEPROM_ADDR_FLAG = 0;
 
 // ------------------- Function prototypes -------------------
 void sampleAdc();
