@@ -1,52 +1,54 @@
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <avr/wdt.h>
 
 // ------------------- Pin constants -------------------
-const uint8_t ledPin       = LED_BUILTIN;
-const uint8_t currentPin   = A1; // ACS758
-const uint8_t carBatPin    = A2;
-const uint8_t liefpoBatPin = A3;
-const uint8_t pwmPin       = 9;
+const uint8_t ledPin           = LED_BUILTIN;
+const uint8_t currentPin       = A1; // ACS758
+const uint8_t carBatPin        = A2;
+const uint8_t liefpoBatPin     = A3;
+const uint8_t pwmPin           = 9;
 
 // ------------------- ADC / sensor constants -------------------
-constexpr float Vref = 5.0;
-constexpr float scaleDirect = Vref / 1023.0;
+constexpr float Vref           = 5.0;
+constexpr float scaleDirect    = Vref / 1023.0;
 
 // Voltage dividers for batteries (carBat & LiFePO4)
-constexpr float R1 = 8200.0;
-constexpr float R2 = 2200.0;
-constexpr float scaleDivider = (Vref / 1023.0) * ((R1 + R2) / R2);
+constexpr float R1             = 8200.0;
+constexpr float R2             = 2200.0;
+constexpr float scaleDivider   = (Vref / 1023.0) * ((R1 + R2) / R2);
 
 // ACS758 parameters
-constexpr float acsOffset = 510.0; // 0A
-constexpr float acsSens   = 0.12207; // 40 mV per 1A
+constexpr float acsOffset      = 509.0; // 0A
+constexpr float acsSens        = 0.12207; // 40 mV per 1A
 
-// ------------------- Safety thresholds -------------------
+// ------------------- Safety thresholds -----------------------
 constexpr float BAT_DIFF_MAX   = 0.0;   // V, carBat - LiFePO4
-constexpr float LIFEPO_MAX     = 14.0;  // V
+constexpr float LIFEPO_MAX     = 13.8;  // V, High stop charge
 constexpr float LIFEPO_RECOVER = 13.5;  // V, resume charging
 constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 
 // ------------------- PWM control constants -------------------
 constexpr float SETPOINT_A     = 7.0;  // target current
-#define PWM_STEP_FAST   20  // 5% PWM step
-#define PWM_STEP_SLOW   2  // 2% PWM step
-constexpr uint8_t   PWM_MAX        = 255;
-constexpr uint8_t   PWM_MIN        = 0;
+#define PWM_STEP_FAST            20      // 5% PWM step
+#define PWM_STEP_SLOW            2       // 2% PWM step
+constexpr int   PWM_MAX        = 255;
+constexpr int   PWM_MIN        = 0;
 
 // ------------------- Timing -------------------
-#define ADC_INTERVAL   25   // in 25ms => 40 Hz
-#define PRINT_INTERVAL 1000  // in 1000ms => 2 Hz
-#define FILTER_CONSTANT 0.3
+#define ADC_INTERVAL             25      // in 25ms => 40 Hz
+#define PRINT_INTERVAL           1000    // in 1000ms => 2 Hz
+#define FILTER_CONSTANT          0.3
 // ------------------- Filtered ADC -------------------
-static float filtCurrent   = 500.0;
-static float filtCarBat    = 0.0;
-static float filtLiFePO4   = 0.0;
+static float filtCurrent       = 500.0;
+static float filtCarBat        = 0.0;
+static float filtLiFePO4       = 0.0;
 
 // EEPROM address to store flag
 constexpr uint8_t EEPROM_ADDR_FLAG = 0;
 
 // ------------------- Function prototypes -------------------
+void setup();
 void sampleAdc();
 float filteredUpdate(float oldVal, float newVal);
 int controlPWM(float measuredAmp, bool doCharge);
@@ -55,19 +57,12 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp);
 bool readEepromFlag();
 void writeEepromFlag(bool flag);
 
-// ------------------- Setup -------------------
-void setup() {
-    pinMode(ledPin, OUTPUT);
-    pinMode(pwmPin, OUTPUT);
-    analogWrite(pwmPin, 0);
-    Serial.begin(115200);
-}
-
-// ------------------- Main loop -------------------
+// ------------------- Main loop ------------------------
 void loop() {
    static uint32_t lastAdcTime = 0;
    static uint32_t lastPrintTime = 0;
    uint32_t now = millis();
+   wdt_reset();
 
     // ADC sampling 25 Hz
     if ((now - lastAdcTime) >= ADC_INTERVAL) {
@@ -96,7 +91,7 @@ void loop() {
     }
 }
 
-// ------------------- Functions -------------------
+// ------------------- Functions ------------------------
 
 // Sample all ADC channels and apply simple filter
 void sampleAdc() {
@@ -114,7 +109,7 @@ int controlPWM(float measuredAmp, bool doCharge) {
     static int16_t pwmOutUpdated = -1; // -1 => will guarantee to update pwm output at first run
     int16_t pwmOut;
     int8_t step = 0;
-
+   
     if(doCharge) { // true
         if (measuredAmp < (SETPOINT_A * 0.8)) {
             step = PWM_STEP_FAST; // inc pwm by PWM_STEP_FAST
@@ -159,7 +154,7 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     }
     
     if ((carVolt - lifepoVolt) < BAT_DIFF_MAX) {
-        Serial.print("Error 1: ");
+        Serial.print("Dif Negativ: ");
         Serial.println((carVolt-lifepoVolt), 2);
         doCharge = false;  // stop charging
     } else if (lifepoVolt > LIFEPO_MAX) {
@@ -183,14 +178,14 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     return doCharge;
 }
 
-// Print current & PWM
+// --------------- Print current & PWM ------------------
 void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut, bool doCharge) {
     Serial.print("Current: ");
     Serial.print(measuredAmp, 1);
     Serial.print("A, C: ");
     Serial.print(carVolt, 1);
     Serial.print(", L: ");
-    Serial.print(lifepoVolt, 1);
+    Serial.print(lifepoVolt, 2);
     Serial.print(", pwm: ");
     Serial.print(pwmOut);
     Serial.print(", ");
@@ -198,6 +193,16 @@ void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut,
     Serial.print(carVolt - lifepoVolt ,2);
     Serial.print(", Charge: ");
     Serial.println(doCharge ? "YES" : "NO");
+}
+
+// ------------------- Setup ----------------------------
+void setup() {
+    wdt_disable();
+    pinMode(ledPin, OUTPUT);
+    pinMode(pwmPin, OUTPUT);
+    analogWrite(pwmPin, PWM_MIN);
+    Serial.begin(115200);
+    wdt_enable(WDTO_4S);
 }
 
 // ------------------- EEPROM helpers -------------------
