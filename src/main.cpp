@@ -25,11 +25,11 @@ constexpr float acsSens        = 0.12207; // 40 mV per 1A
 // ------------------- Safety thresholds -----------------------
 constexpr float BAT_DIFF_MAX   = 0.0;   // V, carBat - LiFePO4
 constexpr float LIFEPO_MAX     = 13.8;  // V, High stop charge
-constexpr float LIFEPO_RECOVER = 13.5;  // V, resume charging
+constexpr float LIFEPO_RECOVER = 13.3;  // V, resume charging
 constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 
 // ------------------- PWM control constants -------------------
-constexpr float SETPOINT_A     = 7.0;  // target current
+constexpr float SETPOINT_A     = 8.0;  // target current
 #define PWM_STEP_FAST            20      // 5% PWM step
 #define PWM_STEP_SLOW            2       // 2% PWM step
 constexpr int   PWM_MAX        = 255;
