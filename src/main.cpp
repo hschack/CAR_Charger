@@ -25,7 +25,7 @@ constexpr float acsSens        = 0.12207; // 40 mV per 1A
 // ------------------- Safety thresholds -----------------------
 constexpr float BAT_DIFF_MAX   = 0.0;   // V, carBat - LiFePO4
 constexpr float LIFEPO_MAX     = 13.8;  // V, High stop charge
-constexpr float LIFEPO_RECOVER = 13.3;  // V, resume charging
+constexpr float LIFEPO_RECOVER = 13.1;  // V, resume charging
 constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 
 // ------------------- PWM control constants -------------------
@@ -142,18 +142,22 @@ int controlPWM(float measuredAmp, bool doCharge) {
 // ------------------- Battery safety check -------------------
 bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     static bool doCharge = false;
+    static bool ChargingPaused = false;
+    static bool prevFlag = ChargingPaused;
     static bool FirstRun = true;
-    bool prevFlag = doCharge;
 
     if(FirstRun) {
-        doCharge = readEepromFlag();
-        prevFlag = doCharge;
+        ChargingPaused = readEepromFlag();
+        prevFlag = ChargingPaused;
         Serial.print("doCharge from eeprom = ");
         Serial.println(doCharge ? "YES" : "NO");
         FirstRun = false;
     }
     
-    if ((carVolt - lifepoVolt) < BAT_DIFF_MAX) {
+    if (ChargingPaused && (lifepoVolt > LIFEPO_RECOVER)) {
+        doCharge = false;
+    }
+    else if ((carVolt - lifepoVolt) < BAT_DIFF_MAX) {
         Serial.print("Dif Negativ: ");
         Serial.println((carVolt-lifepoVolt), 2);
         doCharge = false;  // stop charging
@@ -161,19 +165,21 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
         Serial.print("Full Charge: ) ");
         Serial.println((lifepoVolt), 2);
         doCharge = false;  // stop charging
+        ChargingPaused = true;
     } else if (measuredAmp < ACS_MIN) {
         Serial.print("ACS  lader fra lifePo til bil: ");
         Serial.println((measuredAmp), 1);
         doCharge = false;  // Stop if current goes negative beyond threshold
     } else if (lifepoVolt < LIFEPO_RECOVER) {
+        ChargingPaused = false;
         doCharge = true;   // resume charging
     }
 
     // Write flag to EEPROM if changed
-    if (doCharge != prevFlag) {
-        Serial.println("DoCharg written to eeprom");
-        writeEepromFlag(doCharge);
-        prevFlag = doCharge;
+    if (ChargingPaused != prevFlag) {
+        Serial.println("ChargingPaused written to eeprom");
+        writeEepromFlag(ChargingPaused);
+        prevFlag = ChargingPaused;
     }
     return doCharge;
 }
