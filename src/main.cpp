@@ -170,7 +170,7 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
         Serial.print("ACS  lader fra lifePo til bil: ");
         Serial.println((measuredAmp), 1);
         doCharge = false;  // Stop if current goes negative beyond threshold
-    } else if (lifepoVolt < LIFEPO_RECOVER) {
+    } else if (lifepoVolt < LIFEPO_MAX) {
         ChargingPaused = false;
         doCharge = true;   // resume charging
     }
