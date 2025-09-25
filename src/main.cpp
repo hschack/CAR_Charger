@@ -25,7 +25,7 @@ constexpr float acsSens        = 0.12207; // 40 mV per 1A
 // ------------------- Safety thresholds -----------------------
 constexpr float BAT_DIFF_MAX   = 0.0;   // V, carBat - LiFePO4
 constexpr float LIFEPO_MAX     = 13.8;  // V, High stop charge
-constexpr float LIFEPO_RECOVER = 13.4;  // V, resume charging
+constexpr float LIFEPO_RECOVER = 13.0;  // V, resume charging
 constexpr float ACS_MIN        = -1.0;  // A, stop if current goes negative
 
 // ------------------- PWM control constants -------------------
@@ -37,7 +37,7 @@ constexpr int   PWM_MIN        = 0;
 
 // ------------------- Timing -------------------
 #define ADC_INTERVAL             25      // in 25ms => 40 Hz
-#define PRINT_INTERVAL           1000    // in 1000ms => 2 Hz
+#define PRINT_INTERVAL           10000    // in 1000ms => 2 Hz
 #define FILTER_CONSTANT          0.3
 // ------------------- Filtered ADC -------------------
 static float filtCurrent       = 500.0;
@@ -149,7 +149,7 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
     if(FirstRun) {
         ChargingPaused = readEepromFlag();
         prevFlag = ChargingPaused;
-        Serial.print("doCharge from eeprom = ");
+        Serial.print("Charging pause set to pause in eeprom = ");
         Serial.println(doCharge ? "YES" : "NO");
         FirstRun = false;
     }
@@ -170,7 +170,7 @@ bool batterySafetyCheck(float carVolt, float lifepoVolt, float measuredAmp) {
         Serial.print("ACS  lader fra lifePo til bil: ");
         Serial.println((measuredAmp), 1);
         doCharge = false;  // Stop if current goes negative beyond threshold
-    } else if (lifepoVolt < LIFEPO_RECOVER) {
+    } else if (lifepoVolt < LIFEPO_MAX) {
         ChargingPaused = false;
         doCharge = true;   // resume charging
     }
