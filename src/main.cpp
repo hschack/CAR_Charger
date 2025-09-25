@@ -198,7 +198,10 @@ void printStatus(float measuredAmp, float carVolt, float lifepoVolt, int pwmOut,
     Serial.print(", Dif: ");
     Serial.print(carVolt - lifepoVolt ,2);
     Serial.print(", Charge: ");
-    Serial.println(doCharge ? "YES" : "NO");
+    Serial.print(doCharge ? "YES" : "NO" );
+    //Serial.print(", Pause: ");
+    //Serial.println(ChargingPaused ? "YES" : "NO" );
+
 }
 
 // ------------------- Setup ----------------------------
